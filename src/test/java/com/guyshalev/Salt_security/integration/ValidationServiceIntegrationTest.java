@@ -26,7 +26,6 @@ public class ValidationServiceIntegrationTest {
     private ValidationService validationService;
 
     private ModelDTO testModel;
-    private RequestDTO testRequest;
 
     @BeforeEach
     void setUp() {
