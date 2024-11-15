@@ -2,19 +2,25 @@ package com.guyshalev.Salt_security.service;
 
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.regex.Pattern;
 
 @Component
 public class TypeValidator {
 
-    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@(.+)$");
+    //    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@(.+)$");
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[\\w-.]+@([\\w-]+\\.)+[\\w-]{2,4}$");
     private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final Pattern AUTH_TOKEN_PATTERN = Pattern.compile("^Bearer [a-zA-Z0-9]+$");
-    private static final Pattern DATE_PATTERN = Pattern.compile("^\\d{2}-\\d{2}-\\d{4}$");
+    //    private static final Pattern DATE_PATTERN = Pattern.compile("^\\d{2}-\\d{2}-\\d{4}$");
+    private static final String DATE_PATTERN = "dd-MM-yyyy";
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern(DATE_PATTERN);
 
     public boolean isValidType(Object value, String type) {
-        if (value == null) return false;
+        if (value == null || type == null) return false;
 
         return switch (type) {
             case "Auth-Token" -> validateAuthToken(value);
@@ -56,7 +62,16 @@ public class TypeValidator {
     }
 
     private boolean validateDate(Object value) {
-        return value instanceof String && DATE_PATTERN.matcher((String) value).matches();
+        if (!(value instanceof String dateStr)) {
+            return false;
+        }
+
+        try {
+            LocalDate.parse(dateStr, DATE_FORMATTER);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
+        }
     }
 
     private boolean validateEmail(Object value) {
