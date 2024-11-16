@@ -18,6 +18,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Service responsible for validating API requests against predefined models.
+ * Provides functionality to store models and validate incoming requests against these models.
+ */
 @Service
 @Slf4j
 public class ValidationService {
@@ -34,6 +38,12 @@ public class ValidationService {
         this.modelMapper = modelMapper;
     }
 
+    /**
+     * Saves a list of API models to the database.
+     * Validates input and skips operation if the input list is empty or null.
+     *
+     * @param modelDTOs list of models to save, must not be null or empty
+     */
     @Transactional
     public void saveModels(List<ModelDTO> modelDTOs) {
         if (CollectionUtils.isEmpty(modelDTOs)) {
@@ -44,6 +54,13 @@ public class ValidationService {
         modelRepository.saveAll(models);
     }
 
+    /**
+     * Validates a request against stored models.
+     * Performs validation of path, method, and all parameters according to the stored model.
+     *
+     * @param request the request to validate, must contain path and method
+     * @return validation result containing success status and any validation anomalies
+     */
     @Transactional(readOnly = true)
     public ValidationResultDTO validateRequest(RequestDTO request) {
         if (request == null || request.getPath() == null || request.getMethod() == null) {
@@ -67,6 +84,14 @@ public class ValidationService {
         return validateRequestAgainstModel(request, model);
     }
 
+    /**
+     * Validates a request against a specific model.
+     * Internal method to perform the actual validation once a model is found.
+     *
+     * @param request the request to validate
+     * @param model   the model to validate against
+     * @return validation result containing success status and any validation anomalies
+     */
     private ValidationResultDTO validateRequestAgainstModel(RequestDTO request, Model model) {
         Map<String, String> anomalies = new HashMap<>();
 
@@ -77,6 +102,15 @@ public class ValidationService {
         return new ValidationResultDTO(anomalies.isEmpty(), anomalies);
     }
 
+    /**
+     * Validates a group of parameters (query, header, or body) against their model definition.
+     * Checks for required parameters, type validation, and unexpected parameters.
+     *
+     * @param requestParams the parameters from the request
+     * @param modelParams   the parameter definitions from the model
+     * @param location      the parameter location (query, header, or body)
+     * @param anomalies     map to store validation errors
+     */
     private void validateParameterGroup(List<RequestParameterDTO> requestParams,
                                         List<Parameter> modelParams,
                                         String location,
@@ -85,13 +119,18 @@ public class ValidationService {
         Map<String, RequestParameterDTO> requestParamMap = createParamMap(requestParams);
         Map<String, Parameter> modelParamMap = createParamMap(modelParams);
 
-        // Validate required parameters and types
         validateRequiredAndTypes(requestParamMap, modelParamMap, location, anomalies);
-
-        // Check for unexpected parameters
         validateUnexpectedParams(requestParamMap, modelParamMap, location, anomalies);
     }
 
+    /**
+     * Creates a map of parameters for efficient lookup during validation.
+     * Handles both request parameters and model parameters.
+     *
+     * @param params list of parameters to map
+     * @param <T>    type of parameter (RequestParameterDTO or Parameter)
+     * @return map of parameter names to parameters
+     */
     private <T> Map<String, T> createParamMap(List<T> params) {
         Map<String, T> paramMap = new HashMap<>();
         if (!CollectionUtils.isEmpty(params)) {
@@ -105,6 +144,14 @@ public class ValidationService {
         return paramMap;
     }
 
+    /**
+     * Validates required parameters and their types against the model definition.
+     *
+     * @param requestParamMap map of request parameters
+     * @param modelParamMap   map of model parameters
+     * @param location        parameter location (query, header, or body)
+     * @param anomalies       map to store validation errors
+     */
     private void validateRequiredAndTypes(Map<String, RequestParameterDTO> requestParamMap,
                                           Map<String, Parameter> modelParamMap,
                                           String location,
@@ -112,7 +159,6 @@ public class ValidationService {
         modelParamMap.forEach((paramName, modelParam) -> {
             RequestParameterDTO requestParam = requestParamMap.get(paramName);
 
-            // Check required parameters
             if (modelParam.isRequired() && requestParam == null) {
                 anomalies.put(location + "." + paramName, "Required parameter is missing");
                 return;
@@ -125,6 +171,14 @@ public class ValidationService {
         });
     }
 
+    /**
+     * Validates a single parameter value against its model definition.
+     *
+     * @param requestParam the parameter from the request
+     * @param modelParam   the parameter definition from the model
+     * @param location     parameter location (query, header, or body)
+     * @param anomalies    map to store validation errors
+     */
     private void validateParameterValue(RequestParameterDTO requestParam,
                                         Parameter modelParam,
                                         String location,
@@ -144,6 +198,14 @@ public class ValidationService {
         }
     }
 
+    /**
+     * Checks for unexpected parameters in the request that are not defined in the model.
+     *
+     * @param requestParamMap map of request parameters
+     * @param modelParamMap   map of model parameters
+     * @param location        parameter location (query, header, or body)
+     * @param anomalies       map to store validation errors
+     */
     private void validateUnexpectedParams(Map<String, RequestParameterDTO> requestParamMap,
                                           Map<String, Parameter> modelParamMap,
                                           String location,
@@ -155,6 +217,11 @@ public class ValidationService {
         });
     }
 
+    /**
+     * Retrieves all stored API models.
+     *
+     * @return list of all stored models as DTOs
+     */
     @Transactional(readOnly = true)
     public List<ModelDTO> getAllModels() {
         return modelMapper.toDTOList(modelRepository.findAll());
