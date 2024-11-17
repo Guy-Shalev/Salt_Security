@@ -2,14 +2,14 @@ package com.guyshalev.Salt_security.model.entity;
 
 import jakarta.persistence.*;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
-
-import java.util.List;
 
 @Entity
 @Table(name = "models")
 @Getter
 @Setter
+@NoArgsConstructor
 public class Model {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -21,30 +21,13 @@ public class Model {
     @Column(nullable = false)
     private String method;
 
-    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER, orphanRemoval = true)
-    @JoinColumn(name = "model_id")
-    @JoinTable(
-            name = "model_query_params",
-            joinColumns = @JoinColumn(name = "model_id"),
-            inverseJoinColumns = @JoinColumn(name = "parameter_id")
-    )
-    private List<Parameter> queryParams;
+    @Column(columnDefinition = "TEXT", nullable = false)
+    private String jsonContent;
 
-    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER, orphanRemoval = true)
-    @JoinColumn(name = "model_id")
-    @JoinTable(
-            name = "model_headers",
-            joinColumns = @JoinColumn(name = "model_id"),
-            inverseJoinColumns = @JoinColumn(name = "parameter_id")
-    )
-    private List<Parameter> headers;
+    public Model(String path, String method, String jsonContent) {
+        this.path = path;
+        this.method = method;
+        this.jsonContent = jsonContent;
+    }
 
-    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER, orphanRemoval = true)
-    @JoinColumn(name = "model_id")
-    @JoinTable(
-            name = "model_body",
-            joinColumns = @JoinColumn(name = "model_id"),
-            inverseJoinColumns = @JoinColumn(name = "parameter_id")
-    )
-    private List<Parameter> body;
 }

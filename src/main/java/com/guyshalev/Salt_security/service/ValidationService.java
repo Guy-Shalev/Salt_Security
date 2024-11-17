@@ -1,17 +1,16 @@
 package com.guyshalev.Salt_security.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.guyshalev.Salt_security.dal.ModelRepository;
 import com.guyshalev.Salt_security.mapper.ModelMapper;
 import com.guyshalev.Salt_security.model.dto.ModelDTO;
-import com.guyshalev.Salt_security.model.dto.RequestDTO;
-import com.guyshalev.Salt_security.model.dto.RequestParameterDTO;
 import com.guyshalev.Salt_security.model.dto.ValidationResultDTO;
 import com.guyshalev.Salt_security.model.entity.Model;
-import com.guyshalev.Salt_security.model.entity.Parameter;
+import com.guyshalev.Salt_security.validator.RequestValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
 
 import java.util.HashMap;
 import java.util.List;
@@ -27,200 +26,211 @@ import java.util.Optional;
 public class ValidationService {
 
     private final ModelRepository modelRepository;
+    private final ObjectMapper objectMapper;
+    private final RequestValidator requestValidator;
     private final TypeValidator typeValidator;
     private final ModelMapper modelMapper;
 
     public ValidationService(ModelRepository modelRepository,
+                             ObjectMapper objectMapper,
+                             RequestValidator requestValidator,
                              TypeValidator typeValidator,
                              ModelMapper modelMapper) {
         this.modelRepository = modelRepository;
+        this.objectMapper = objectMapper;
+        this.requestValidator = requestValidator;
         this.typeValidator = typeValidator;
         this.modelMapper = modelMapper;
     }
 
+
     /**
-     * Saves a list of API models to the database.
-     * Validates input and skips operation if the input list is empty or null.
+     * Saves API models to the database. Replaces all existing models with the new ones.
+     * Validates each model's structure before saving.
      *
-     * @param modelDTOs list of models to save, must not be null or empty
+     * @param jsonModels JSON string containing an array of API models
+     * @throws IllegalArgumentException if the input is not a valid JSON array or contains invalid models
      */
     @Transactional
-    public void saveModels(List<ModelDTO> modelDTOs) {
-        if (CollectionUtils.isEmpty(modelDTOs)) {
-            log.warn("Attempted to save empty or null model list");
-            return;
+    public void saveModels(String jsonModels) {
+        try {
+            JsonNode modelsNode = objectMapper.readTree(jsonModels);
+
+            if (!modelsNode.isArray()) {
+                throw new IllegalArgumentException("Input must be an array of models");
+            }
+
+            modelRepository.deleteAll();
+
+            for (JsonNode modelNode : modelsNode) {
+                // Validate model structure
+                Map<String, String> validationErrors = requestValidator.validateModel(modelNode);
+                if (!validationErrors.isEmpty()) {
+                    throw new IllegalArgumentException("Invalid model structure: " + validationErrors);
+                }
+
+                String path = modelNode.get("path").asText();
+                String method = modelNode.get("method").asText();
+                modelRepository.save(new Model(path, method, modelNode.toString()));
+            }
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to process models: " + e.getMessage());
         }
-        List<Model> models = modelMapper.toEntityList(modelDTOs);
-        modelRepository.saveAll(models);
     }
 
     /**
-     * Validates a request against stored models.
-     * Performs validation of path, method, and all parameters according to the stored model.
+     * Validates an API request against stored models.
+     * Performs both structural validation and type checking against the matching model.
      *
-     * @param request the request to validate, must contain path and method
-     * @return validation result containing success status and any validation anomalies
+     * @param jsonRequest JSON string containing the request to validate
+     * @return ValidationResultDTO containing validation result and any anomalies found
      */
     @Transactional(readOnly = true)
-    public ValidationResultDTO validateRequest(RequestDTO request) {
-        if (request == null || request.getPath() == null || request.getMethod() == null) {
+    public ValidationResultDTO validateRequest(String jsonRequest) {
+        try {
+            JsonNode request = objectMapper.readTree(jsonRequest);
+
+            // Validate request structure
+            Map<String, String> structureErrors = requestValidator.validateRequest(request);
+            if (!structureErrors.isEmpty()) {
+                return new ValidationResultDTO(false, structureErrors);
+            }
+
+            String path = request.get("path").asText();
+            String method = request.get("method").asText();
+
+            // Find matching model
+            Optional<Model> modelOpt = modelRepository.findByPathAndMethod(path, method);
+            if (modelOpt.isEmpty()) {
+                return new ValidationResultDTO(false,
+                        Map.of("error", "No model found for path '" + path + "' and method '" + method + "'"));
+            }
+
+            JsonNode model = objectMapper.readTree(modelOpt.get().getJsonContent());
+            Map<String, String> anomalies = validateAgainstModel(request, model);
+
+            return new ValidationResultDTO(anomalies.isEmpty(), anomalies);
+        } catch (Exception e) {
             return new ValidationResultDTO(false,
-                    Map.of("global", "Request, path, and method cannot be null"));
+                    Map.of("error", "Failed to validate request: " + e.getMessage()));
         }
-
-        Optional<Model> modelOpt = modelRepository.findByPathAndMethod(request.getPath(), request.getMethod());
-
-        if (modelOpt.isEmpty()) {
-            return new ValidationResultDTO(false,
-                    Map.of("global", String.format("No model found for path '%s' and method '%s'",
-                            request.getPath(), request.getMethod())));
-        }
-
-        Model model = modelOpt.get();
-        if (log.isDebugEnabled()) {
-            log.debug("Validating request for path: {}, method: {}", request.getPath(), request.getMethod());
-        }
-
-        return validateRequestAgainstModel(request, model);
     }
 
     /**
      * Validates a request against a specific model.
-     * Internal method to perform the actual validation once a model is found.
+     * Checks all parameters sections (query_params, headers, body).
      *
-     * @param request the request to validate
-     * @param model   the model to validate against
-     * @return validation result containing success status and any validation anomalies
+     * @param request The request to validate
+     * @param model The model to validate against
+     * @return Map of validation anomalies found, empty if valid
      */
-    private ValidationResultDTO validateRequestAgainstModel(RequestDTO request, Model model) {
+    private Map<String, String> validateAgainstModel(JsonNode request, JsonNode model) {
         Map<String, String> anomalies = new HashMap<>();
-
-        validateParameterGroup(request.getQueryParams(), model.getQueryParams(), "query", anomalies);
-        validateParameterGroup(request.getHeaders(), model.getHeaders(), "header", anomalies);
-        validateParameterGroup(request.getBody(), model.getBody(), "body", anomalies);
-
-        return new ValidationResultDTO(anomalies.isEmpty(), anomalies);
+        validateParameterSection(request, model, "query_params", anomalies);
+        validateParameterSection(request, model, "headers", anomalies);
+        validateParameterSection(request, model, "body", anomalies);
+        return anomalies;
     }
 
     /**
-     * Validates a group of parameters (query, header, or body) against their model definition.
-     * Checks for required parameters, type validation, and unexpected parameters.
+     * Validates a specific section of parameters in the request against the model.
+     * Checks for required parameters, unexpected parameters, and type validation.
      *
-     * @param requestParams the parameters from the request
-     * @param modelParams   the parameter definitions from the model
-     * @param location      the parameter location (query, header, or body)
-     * @param anomalies     map to store validation errors
+     * @param request The request containing parameters
+     * @param model The model containing parameter definitions
+     * @param section The section to validate (query_params, headers, or body)
+     * @param anomalies Map to store any validation anomalies found
      */
-    private void validateParameterGroup(List<RequestParameterDTO> requestParams,
-                                        List<Parameter> modelParams,
-                                        String location,
-                                        Map<String, String> anomalies) {
-        // Create maps for efficient lookup
-        Map<String, RequestParameterDTO> requestParamMap = createParamMap(requestParams);
-        Map<String, Parameter> modelParamMap = createParamMap(modelParams);
+    private void validateParameterSection(JsonNode request, JsonNode model, String section, Map<String, String> anomalies) {
+        JsonNode requestParams = request.get(section);
+        JsonNode modelParams = model.get(section);
 
-        validateRequiredAndTypes(requestParamMap, modelParamMap, location, anomalies);
-        validateUnexpectedParams(requestParamMap, modelParamMap, location, anomalies);
-    }
-
-    /**
-     * Creates a map of parameters for efficient lookup during validation.
-     * Handles both request parameters and model parameters.
-     *
-     * @param params list of parameters to map
-     * @param <T>    type of parameter (RequestParameterDTO or Parameter)
-     * @return map of parameter names to parameters
-     */
-    private <T> Map<String, T> createParamMap(List<T> params) {
-        Map<String, T> paramMap = new HashMap<>();
-        if (!CollectionUtils.isEmpty(params)) {
-            params.forEach(param -> {
-                String name = param instanceof RequestParameterDTO ?
-                        ((RequestParameterDTO) param).getName() :
-                        ((Parameter) param).getName();
-                paramMap.put(name, param);
-            });
+        if (modelParams == null || !modelParams.isArray()) {
+            return;
         }
-        return paramMap;
-    }
 
-    /**
-     * Validates required parameters and their types against the model definition.
-     *
-     * @param requestParamMap map of request parameters
-     * @param modelParamMap   map of model parameters
-     * @param location        parameter location (query, header, or body)
-     * @param anomalies       map to store validation errors
-     */
-    private void validateRequiredAndTypes(Map<String, RequestParameterDTO> requestParamMap,
-                                          Map<String, Parameter> modelParamMap,
-                                          String location,
-                                          Map<String, String> anomalies) {
-        modelParamMap.forEach((paramName, modelParam) -> {
-            RequestParameterDTO requestParam = requestParamMap.get(paramName);
+        // Create map of model parameters
+        Map<String, JsonNode> modelParamsMap = new HashMap<>();
+        for (JsonNode param : modelParams) {
+            modelParamsMap.put(param.get("name").asText(), param);
+        }
 
-            if (modelParam.isRequired() && requestParam == null) {
-                anomalies.put(location + "." + paramName, "Required parameter is missing");
-                return;
+        // Check request parameters
+        if (requestParams != null && requestParams.isArray()) {
+            for (JsonNode requestParam : requestParams) {
+                String paramName = requestParam.get("name").asText();
+                JsonNode modelParam = modelParamsMap.get(paramName);
+
+                if (modelParam == null) {
+                    anomalies.put(section + "." + paramName, "Unexpected parameter");
+                    continue;
+                }
+
+                validateParameterValue(requestParam, modelParam, section + "." + paramName, anomalies);
             }
+        }
 
-            // Validate value if parameter is present
-            if (requestParam != null) {
-                validateParameterValue(requestParam, modelParam, location, anomalies);
+        // Check for missing required parameters
+        for (Map.Entry<String, JsonNode> entry : modelParamsMap.entrySet()) {
+            if (entry.getValue().get("required").asBoolean() &&
+                    (requestParams == null || !hasParameter(requestParams, entry.getKey()))) {
+                anomalies.put(section + "." + entry.getKey(), "Required parameter is missing");
             }
-        });
+        }
     }
 
     /**
      * Validates a single parameter value against its model definition.
      *
-     * @param requestParam the parameter from the request
-     * @param modelParam   the parameter definition from the model
-     * @param location     parameter location (query, header, or body)
-     * @param anomalies    map to store validation errors
+     * @param requestParam The parameter from the request
+     * @param modelParam The parameter definition from the model
+     * @param path The path of the parameter for error reporting
+     * @param anomalies Map to store any validation anomalies found
      */
-    private void validateParameterValue(RequestParameterDTO requestParam,
-                                        Parameter modelParam,
-                                        String location,
-                                        Map<String, String> anomalies) {
-        boolean isValid = modelParam.getTypes().stream()
-                .anyMatch(type -> typeValidator.isValidType(requestParam.getValue(), type));
+    private void validateParameterValue(JsonNode requestParam, JsonNode modelParam, String path, Map<String, String> anomalies) {
+        JsonNode value = requestParam.get("value");
+        if (value == null) {
+            anomalies.put(path, "Value is missing");
+            return;
+        }
+
+        boolean isValid = false;
+        for (JsonNode type : modelParam.get("types")) {
+            if (typeValidator.isValidType(value, type.asText())) {
+                isValid = true;
+                break;
+            }
+        }
 
         if (!isValid) {
-            anomalies.put(
-                    location + "." + requestParam.getName(),
-                    String.format(
-                            "Value '%s' does not match any of the allowed types: %s",
-                            requestParam.getValue(),
-                            String.join(", ", modelParam.getTypes())
-                    )
-            );
+            anomalies.put(path, String.format(
+                    "Value '%s' does not match any of the allowed types: %s",
+                    value.toString(),
+                    modelParam.get("types").toString()
+            ));
         }
     }
 
     /**
-     * Checks for unexpected parameters in the request that are not defined in the model.
+     * Checks if a parameter with the given name exists in the parameters array.
      *
-     * @param requestParamMap map of request parameters
-     * @param modelParamMap   map of model parameters
-     * @param location        parameter location (query, header, or body)
-     * @param anomalies       map to store validation errors
+     * @param params The parameters array to search
+     * @param paramName The name of the parameter to find
+     * @return true if the parameter exists, false otherwise
      */
-    private void validateUnexpectedParams(Map<String, RequestParameterDTO> requestParamMap,
-                                          Map<String, Parameter> modelParamMap,
-                                          String location,
-                                          Map<String, String> anomalies) {
-        requestParamMap.forEach((name, param) -> {
-            if (!modelParamMap.containsKey(name)) {
-                anomalies.put(location + "." + name, "Unexpected parameter");
+    private boolean hasParameter(JsonNode params, String paramName) {
+        for (JsonNode param : params) {
+            if (param.get("name").asText().equals(paramName)) {
+                return true;
             }
-        });
+        }
+        return false;
     }
 
     /**
      * Retrieves all stored API models.
      *
-     * @return list of all stored models as DTOs
+     * @return List of ModelDTO objects representing all stored models
      */
     @Transactional(readOnly = true)
     public List<ModelDTO> getAllModels() {

@@ -1,264 +1,285 @@
 package com.guyshalev.Salt_security.integration;
 
-import com.guyshalev.Salt_security.model.dto.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.guyshalev.Salt_security.model.dto.ModelDTO;
+import com.guyshalev.Salt_security.model.dto.ValidationResultDTO;
 import com.guyshalev.Salt_security.service.ValidationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collectors;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
+import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Integration tests for ValidationService.
+ * Tests the complete flow of saving models and validating requests.
+ */
 @SpringBootTest
-@ActiveProfiles("test")
 @Transactional
-public class ValidationServiceIntegrationTest {
+class ValidationServiceIntegrationTest {
 
     @Autowired
     private ValidationService validationService;
 
-    private ModelDTO testModel;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @BeforeEach
-    void setUp() {
-        // Create a test model
-        testModel = createTestModel();
-    }
-
-    private ModelDTO createTestModel() {
-        ModelDTO model = new ModelDTO();
-        model.setPath("/users/info");
-        model.setMethod("GET");
-
-        // Add query parameters
-        ParameterDTO queryParam = new ParameterDTO();
-        queryParam.setName("with_extra_data");
-        queryParam.setTypes(Collections.singletonList("Boolean"));
-        queryParam.setRequired(false);
-        model.setQueryParams(Collections.singletonList(queryParam));
-
-        // Add headers
-        ParameterDTO headerParam = new ParameterDTO();
-        headerParam.setName("Authorization");
-        headerParam.setTypes(Collections.singletonList("Auth-Token"));
-        headerParam.setRequired(true);
-        model.setHeaders(Collections.singletonList(headerParam));
-
-        model.setBody(Collections.emptyList());
-        return model;
-    }
-
-    private RequestDTO createValidRequest() {
-        RequestDTO request = new RequestDTO();
-        request.setPath("/users/info");
-        request.setMethod("GET");
-
-        // Add query parameter
-        RequestParameterDTO queryParam = new RequestParameterDTO();
-        queryParam.setName("with_extra_data");
-        queryParam.setValue(false);
-        request.setQueryParams(Collections.singletonList(queryParam));
-
-        // Add header
-        RequestParameterDTO headerParam = new RequestParameterDTO();
-        headerParam.setName("Authorization");
-        headerParam.setValue("Bearer abc123");
-        request.setHeaders(Collections.singletonList(headerParam));
-
-        request.setBody(Collections.emptyList());
-        return request;
-    }
-
-    private ModelDTO createAnotherTestModel() {
-        ModelDTO model = new ModelDTO();
-        model.setPath("/users/create");
-        model.setMethod("POST");
-
-        // Add body parameters
-        ParameterDTO emailParam = new ParameterDTO();
-        emailParam.setName("email");
-        emailParam.setTypes(Collections.singletonList("Email"));
-        emailParam.setRequired(true);
-
-        ParameterDTO nameParam = new ParameterDTO();
-        nameParam.setName("name");
-        nameParam.setTypes(Collections.singletonList("String"));
-        nameParam.setRequired(true);
-
-        model.setBody(Arrays.asList(emailParam, nameParam));
-        model.setQueryParams(Collections.emptyList());
-        model.setHeaders(Collections.emptyList());
-        return model;
-    }
-
-    private RequestDTO createRequestWithInvalidParameterType() {
-        RequestDTO request = createValidRequest();
-        request.getQueryParams().get(0).setValue("invalid-boolean");
-        return request;
-    }
-
-    private RequestDTO createRequestMissingRequiredParameter() {
-        RequestDTO request = new RequestDTO();
-        request.setPath("/users/info");
-        request.setMethod("GET");
-        request.setQueryParams(Collections.emptyList());
-        request.setHeaders(Collections.emptyList());
-        request.setBody(Collections.emptyList());
-        return request;
-    }
-
-    private RequestDTO createRequestWithUnexpectedParameter() {
-        RequestDTO request = createValidRequest();
-        RequestParameterDTO unexpectedParam = new RequestParameterDTO();
-        unexpectedParam.setName("unexpected_param");
-        unexpectedParam.setValue("value");
-        request.setQueryParams(Arrays.asList(request.getQueryParams().get(0), unexpectedParam));
-        return request;
+    void setup() throws Exception {
+        String validModel = """
+                [{
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "with_extra_data",
+                            "types": ["Boolean"],
+                            "required": false
+                        },
+                        {
+                            "name": "user_id",
+                            "types": ["Int", "UUID"],
+                            "required": false
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "types": ["Auth-Token"],
+                            "required": true
+                        }
+                    ],
+                    "body": []
+                }]""";
+        validationService.saveModels(validModel);
     }
 
     @Test
-    void fullValidationFlow_ValidRequest_ShouldSucceed() {
-        // Save model
-        validationService.saveModels(Collections.singletonList(testModel));
-
-        // Create valid request
-        RequestDTO request = createValidRequest();
-
-        // Validate request
-        ValidationResultDTO result = validationService.validateRequest(request);
-
-        // Assert
-        assertThat(result.isValid()).isTrue();
-        assertThat(result.getAnomalies()).isEmpty();
-    }
-
-    private RequestDTO createInvalidRequest() {
-        RequestDTO request = createValidRequest();
-        RequestParameterDTO queryParam = request.getQueryParams().get(0);
-        queryParam.setValue("not-a-boolean");
-        return request;
+    void whenSavingValidModel_thenSuccess() {
+        List<ModelDTO> models = validationService.getAllModels();
+        assertEquals(1, models.size());
+        assertEquals("/users/info", models.get(0).getPath());
+        assertEquals("GET", models.get(0).getMethod());
     }
 
     @Test
-    void fullValidationFlow_InvalidRequest_ShouldFail() {
-        // Save model
-        validationService.saveModels(Collections.singletonList(testModel));
+    void whenSavingInvalidModel_thenThrowsException() {
+        String invalidModel = """
+                [{
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "param1",
+                            "types": ["InvalidType"],
+                            "required": false
+                        }
+                    ]
+                }]""";
 
-        // Create invalid request
-        RequestDTO request = createInvalidRequest();
-
-        // Validate request
-        ValidationResultDTO result = validationService.validateRequest(request);
-
-        // Assert
-        assertThat(result.isValid()).isFalse();
-        assertThat(result.getAnomalies()).isNotEmpty();
+        assertThrows(IllegalArgumentException.class, () -> validationService.saveModels(invalidModel));
     }
 
     @Test
-    void saveAndRetrieveModels_ShouldMatch() {
-        // Create multiple models
-        List<ModelDTO> models = Arrays.asList(
-                createTestModel(),
-                createAnotherTestModel()
+    void whenValidatingValidRequest_thenSuccess() throws Exception {
+        String validRequest = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "with_extra_data",
+                            "value": false
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "Bearer abc123def456"
+                        }
+                    ],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(validRequest);
+        assertTrue(result.isValid());
+        assertTrue(result.getAnomalies().isEmpty());
+    }
+
+    @Test
+    void whenValidatingRequestWithMissingRequiredHeader_thenFails() throws Exception {
+        String requestWithMissingHeader = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "with_extra_data",
+                            "value": false
+                        }
+                    ],
+                    "headers": [],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(requestWithMissingHeader);
+        assertFalse(result.isValid());
+        assertTrue(result.getAnomalies().containsKey("headers.Authorization"));
+        assertEquals("Required parameter is missing", result.getAnomalies().get("headers.Authorization"));
+    }
+
+    @Test
+    void whenValidatingRequestWithInvalidType_thenFails() throws Exception {
+        String requestWithInvalidType = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "with_extra_data",
+                            "value": "not-a-boolean"
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "Bearer abc123def456"
+                        }
+                    ],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(requestWithInvalidType);
+        assertFalse(result.isValid());
+        assertTrue(result.getAnomalies().containsKey("query_params.with_extra_data"));
+    }
+
+    @Test
+    void whenValidatingRequestWithInvalidAuthToken_thenFails() throws Exception {
+        String requestWithInvalidToken = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "InvalidToken"
+                        }
+                    ],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(requestWithInvalidToken);
+        assertFalse(result.isValid());
+        assertTrue(result.getAnomalies().containsKey("headers.Authorization"));
+    }
+
+    @Test
+    void whenValidatingRequestWithUnexpectedParameter_thenFails() throws Exception {
+        String requestWithExtraParam = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "unexpected_param",
+                            "value": "test"
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "Bearer abc123def456"
+                        }
+                    ],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(requestWithExtraParam);
+        assertFalse(result.isValid());
+        assertTrue(result.getAnomalies().containsKey("query_params.unexpected_param"));
+        assertEquals("Unexpected parameter", result.getAnomalies().get("query_params.unexpected_param"));
+    }
+
+    @Test
+    void whenValidatingRequestForNonExistentPath_thenFails() throws Exception {
+        String requestWithWrongPath = """
+                {
+                    "path": "/non/existent",
+                    "method": "GET",
+                    "query_params": [],
+                    "headers": [],
+                    "body": []
+                }""";
+
+        ValidationResultDTO result = validationService.validateRequest(requestWithWrongPath);
+        assertFalse(result.isValid());
+        assertEquals(
+                "No model found for path '/non/existent' and method 'GET'",
+                result.getAnomalies().get("error")
         );
-
-        // Save models
-        validationService.saveModels(models);
-
-        // Retrieve models
-        List<ModelDTO> retrievedModels = validationService.getAllModels();
-
-        // Assert
-        assertThat(retrievedModels).hasSameSizeAs(models);
-        assertThat(retrievedModels)
-                .extracting(ModelDTO::getPath, ModelDTO::getMethod)
-                .containsExactlyInAnyOrderElementsOf(
-                        models.stream()
-                                .map(m -> tuple(m.getPath(), m.getMethod()))
-                                .collect(Collectors.toList())
-                );
-
-        // Additional assertions for parameters
-        for (ModelDTO originalModel : models) {
-            ModelDTO retrievedModel = retrievedModels.stream()
-                    .filter(m -> m.getPath().equals(originalModel.getPath())
-                            && m.getMethod().equals(originalModel.getMethod()))
-                    .findFirst()
-                    .orElseThrow();
-
-            // Compare parameters
-            assertThat(retrievedModel.getQueryParams()).hasSameSizeAs(originalModel.getQueryParams());
-            assertThat(retrievedModel.getHeaders()).hasSameSizeAs(originalModel.getHeaders());
-            assertThat(retrievedModel.getBody()).hasSameSizeAs(originalModel.getBody());
-        }
     }
 
     @Test
-    void validateRequest_WithMissingModel_ShouldFail() {
-        RequestDTO request = createValidRequest();
-        ValidationResultDTO result = validationService.validateRequest(request);
+    void whenValidatingMalformedJson_thenFails() {
+        String malformedJson = "{ invalid json }";
 
-        assertThat(result.isValid()).isFalse();
-        assertThat(result.getAnomalies())
-                .containsKey("global")
-                .containsValue(String.format("No model found for path '%s' and method '%s'",
-                        request.getPath(), request.getMethod()));
+        ValidationResultDTO result = validationService.validateRequest(malformedJson);
+        assertFalse(result.isValid());
+        assertNotNull(result.getAnomalies().get("error"));
     }
 
     @Test
-    void validateRequest_WithMissingRequiredParameter_ShouldFail() {
-        // Save model
-        validationService.saveModels(Collections.singletonList(testModel));
+    void whenValidatingWithMultipleTypes_thenSucceeds() throws Exception {
+        String requestWithUUID = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "user_id",
+                            "value": "123e4567-e89b-12d3-a456-426614174000"
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "Bearer abc123def456"
+                        }
+                    ],
+                    "body": []
+                }""";
 
-        // Create request missing required parameter
-        RequestDTO request = createRequestMissingRequiredParameter();
+        ValidationResultDTO result = validationService.validateRequest(requestWithUUID);
+        assertTrue(result.isValid());
+        assertTrue(result.getAnomalies().isEmpty());
 
-        // Validate
-        ValidationResultDTO result = validationService.validateRequest(request);
+        String requestWithInt = """
+                {
+                    "path": "/users/info",
+                    "method": "GET",
+                    "query_params": [
+                        {
+                            "name": "user_id",
+                            "value": 12345
+                        }
+                    ],
+                    "headers": [
+                        {
+                            "name": "Authorization",
+                            "value": "Bearer abc123def456"
+                        }
+                    ],
+                    "body": []
+                }""";
 
-        assertThat(result.isValid()).isFalse();
-        assertThat(result.getAnomalies())
-                .containsKey("header.Authorization");
-    }
-
-    @Test
-    void validateRequest_WithInvalidParameterType_ShouldFail() {
-        // Save model
-        validationService.saveModels(Collections.singletonList(testModel));
-
-        // Create request with invalid parameter type
-        RequestDTO request = createRequestWithInvalidParameterType();
-
-        // Validate
-        ValidationResultDTO result = validationService.validateRequest(request);
-
-        assertThat(result.isValid()).isFalse();
-        assertThat(result.getAnomalies())
-                .containsKey("query.with_extra_data");
-    }
-
-    @Test
-    void validateRequest_WithUnexpectedParameter_ShouldFail() {
-        // Save model
-        validationService.saveModels(Collections.singletonList(testModel));
-
-        // Create request with unexpected parameter
-        RequestDTO request = createRequestWithUnexpectedParameter();
-
-        // Validate
-        ValidationResultDTO result = validationService.validateRequest(request);
-
-        assertThat(result.isValid()).isFalse();
-        assertThat(result.getAnomalies())
-                .containsKey("query.unexpected_param");
+        result = validationService.validateRequest(requestWithInt);
+        assertTrue(result.isValid());
+        assertTrue(result.getAnomalies().isEmpty());
     }
 }

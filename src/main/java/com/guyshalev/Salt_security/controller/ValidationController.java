@@ -20,8 +20,8 @@ public class ValidationController {
     }
 
     @PostMapping("/models")
-    public ResponseEntity<Void> saveModels(@RequestBody List<ModelDTO> models) {
-        validationService.saveModels(models);
+    public ResponseEntity<Void> saveModels(@RequestBody String jsonModels) {
+        validationService.saveModels(jsonModels);
         return ResponseEntity.ok().build();
     }
 
@@ -32,8 +32,8 @@ public class ValidationController {
     }
 
     @PostMapping("/validate")
-    public ResponseEntity<ValidationResultDTO> validateRequest(@RequestBody RequestDTO request) {
-        ValidationResultDTO result = validationService.validateRequest(request);
+    public ResponseEntity<ValidationResultDTO> validateRequest(@RequestBody String jsonRequest) {
+        ValidationResultDTO result = validationService.validateRequest(jsonRequest);
         return ResponseEntity.ok(result);
     }
 }

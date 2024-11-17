@@ -1,17 +1,16 @@
 package com.guyshalev.Salt_security.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.List;
 import java.util.regex.Pattern;
 
 /**
  * Component responsible for validating parameter values against specified types.
- * Supports various types including Int, String, Boolean, List, Date, Email, UUID, and Auth-Token.
- * Uses regex patterns and type checking for validation.
+ * Handles validation of various data types including primitives and complex types.
  */
 @Component
 public class TypeValidator {
@@ -23,14 +22,14 @@ public class TypeValidator {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern(DATE_PATTERN);
 
     /**
-     * Validates a value against a specified type.
-     * Supports multiple type validations including basic types and complex patterns.
+     * Validates a JSON value against a specified type.
      *
-     * @param value the value to validate
-     * @param type  the expected type (Int, String, Boolean, List, Date, Email, UUID, or Auth-Token)
+     * @param value The JSON value to validate
+     * @param type The expected type. Must be one of: "Auth-Token", "UUID", "Email", "Date",
+     *             "Boolean", "Int", "String", or "List"
      * @return true if the value matches the type, false otherwise
      */
-    public boolean isValidType(Object value, String type) {
+    public boolean isValidType(JsonNode value, String type) {
         if (value == null || type == null) return false;
 
         return switch (type) {
@@ -40,84 +39,63 @@ public class TypeValidator {
             case "Date" -> validateDate(value);
             case "Boolean" -> validateBoolean(value);
             case "Int" -> validateInt(value);
-            case "String" -> value instanceof String;
-            case "List" -> value instanceof List;
+            case "String" -> validateString(value);
+            case "List" -> validateList(value);
             default -> false;
         };
     }
 
-    /**
-     * Validates if a value represents a valid integer.
-     * Accepts Integer, Long, or String representation of numbers.
-     *
-     * @param value the value to validate
-     * @return true if the value is a valid integer, false otherwise
-     */
-    private boolean validateInt(Object value) {
-        if (value instanceof Integer || value instanceof Long) {
-            return true;
-        }
-        if (value instanceof String) {
-            try {
-                Long.parseLong((String) value);
-                return true;
-            } catch (NumberFormatException e) {
-                return false;
-            }
-        }
-        return false;
+    private boolean validateString(JsonNode value) {
+        return value.isTextual();
+    }
+
+    private boolean validateInt(JsonNode value) {
+        return value.isInt() || value.isLong() ||
+                (value.isTextual() && value.asText().matches("-?\\d+"));
     }
 
     /**
-     * Validates if a value represents a valid boolean.
-     * Accepts Boolean objects or Strings "true"/"false" (case-insensitive).
+     * Validates if a value is a valid boolean.
+     * Accepts both boolean nodes and string representations ("true"/"false").
      *
-     * @param value the value to validate
+     * @param value The value to validate
      * @return true if the value is a valid boolean, false otherwise
      */
-    private boolean validateBoolean(Object value) {
-        if (value instanceof Boolean) {
-            return true;
-        }
-        if (value instanceof String) {
-            String strValue = ((String) value).toLowerCase().trim();
-            return strValue.equals("true") || strValue.equals("false");
-        }
-        return false;
+    private boolean validateBoolean(JsonNode value) {
+        return value.isBoolean() ||
+                (value.isTextual() && (value.asText().equalsIgnoreCase("true")
+                        || value.asText().equalsIgnoreCase("false")));
     }
 
     /**
-     * Validates if a value represents a valid date in dd-MM-yyyy format.
-     * Uses DateTimeFormatter for parsing and validation.
+     * Validates if a value is a valid date in dd-MM-yyyy format.
      *
-     * @param value the value to validate
-     * @return true if the value is a valid date, false otherwise
+     * @param value The value to validate
+     * @return true if the value is a valid date string, false otherwise
      */
-    private boolean validateDate(Object value) {
-        if (!(value instanceof String dateStr)) {
-            return false;
-        }
-
+    private boolean validateDate(JsonNode value) {
+        if (!value.isTextual()) return false;
         try {
-            LocalDate.parse(dateStr, DATE_FORMATTER);
+            LocalDate.parse(value.asText(), DATE_FORMATTER);
             return true;
         } catch (DateTimeParseException e) {
             return false;
         }
     }
 
-    private boolean validateEmail(Object value) {
-        return value instanceof String && EMAIL_PATTERN.matcher((String) value).matches();
+    private boolean validateEmail(JsonNode value) {
+        return value.isTextual() && EMAIL_PATTERN.matcher(value.asText()).matches();
     }
 
-    private boolean validateUUID(Object value) {
-        return value instanceof String && UUID_PATTERN.matcher((String) value).matches();
+    private boolean validateUUID(JsonNode value) {
+        return value.isTextual() && UUID_PATTERN.matcher(value.asText()).matches();
     }
 
-    private boolean validateAuthToken(Object value) {
-        if (!(value instanceof String token)) {
-            return false;
-        }
-        return AUTH_TOKEN_PATTERN.matcher(token).matches();
+    private boolean validateAuthToken(JsonNode value) {
+        return value.isTextual() && AUTH_TOKEN_PATTERN.matcher(value.asText()).matches();
+    }
+
+    private boolean validateList(JsonNode value) {
+        return value.isArray();
     }
 }
